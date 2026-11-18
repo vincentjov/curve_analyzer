@@ -5,3 +5,59 @@
 .home-import{margin-top:20px}.home-import .drop-zone{margin:0 0 12px;padding:15px}.home-import h2{font-size:18px}.home-import #homeSelection{flex:1;color:#70829c;font-size:12px}.record-tabs{display:flex;gap:5px;overflow-x:auto;margin-bottom:12px;padding:3px}.record-tab{display:flex;align-items:center;background:#edf1f7;border:1px solid #e0e6f0;border-radius:10px;flex-shrink:0;max-width:310px}.record-tab.active{background:white;border-color:#8eb3f5;box-shadow:0 2px 8px #33558810}.record-tab [role=tab]{border:0;background:transparent;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:265px;text-align:left;font-size:12px}.record-tab .close-tab{border:0;background:transparent;padding:8px;color:#8491a8}.workspace-drop{padding:15px;border:1px dashed #c6d5ec;border-radius:10px;margin-bottom:16px;color:#7086a6;text-align:center;font-size:12px;cursor:pointer}.workspace-drop.over,.home-import .over{background:#e5eeff}body.busy .record-tabs{pointer-events:none;opacity:.6}footer{flex-wrap:wrap}@media print{.record-tabs,.workspace-drop{display:none!important}}
 
 .legal-links{display:flex;flex-wrap:wrap;gap:.5rem 1rem}.legal-links a{color:#43546d;text-decoration:underline;text-underline-offset:.18em}.legal-page{max-width:790px;margin:36px auto;padding:0 20px;color:#263248;line-height:1.6}.legal-page h1{line-height:1.2}.legal-page nav{margin:0 0 20px}.legal-page section{padding:20px clamp(18px,4vw,32px)}.legal-page h2{margin-top:0}.legal-page address{font-style:normal}.legal-page a:focus-visible,.legal-links a:focus-visible{outline:2px solid #245ec7;outline-offset:3px}.detached-footer{margin:12px 20px}
+
+/* Keep actions on the same baseline as the fields they apply to. */
+#workspace .toolbar, #axisSettings .form-row, #batch .toolbar, .plot-fields {
+  align-items: flex-end;
+}
+#workspace .toolbar > button, #batch .toolbar > button, #axisSettings button,
+#workspace .toolbar select, #batch .toolbar select, .plot-fields input:not([type=checkbox]), .plot-fields select {
+  min-height: 38px;
+}
+#plotTools > .check, #axisSettings .form-row > label:has(input[type=checkbox]),
+.plot-fields > .check, #workspace .toolbar > .filename {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+}
+#axisSettings .form-row > label:has(input[type=checkbox]) { flex-direction: row; }
+
+.sensor-list { margin-top: 16px; }
+.sensor-row {
+  display: grid;
+  grid-template-columns: minmax(100px, 8rem) minmax(0, 1fr);
+  align-items: start;
+  gap: 8px 12px;
+  padding: 9px 0;
+  border-top: 1px solid #e9edf3;
+}
+.sensor-row h4 { margin: 6px 0; font-size: 12px; color: #43546d; }
+.sensor-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 125px), 1fr));
+  gap: 6px;
+}
+.sensor-axes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.sensor-axis { display: grid; gap: 6px; min-width: 0; }
+.sensor-unknown-axis { grid-column: 2; }
+.curve-choice, .axis-unavailable {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 4px 7px;
+  border: 1px solid #e0e6ef;
+  border-radius: 7px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.curve-choice { cursor: pointer; }
+.curve-choice:has(input:checked) { background: #edf4ff; border-color: #8eb3f5; }
+.curve-choice input { flex-shrink: 0; }
+.axis-unavailable { color: #66758b; background: #f5f7fa; }
+@media (max-width: 520px) {
+  .sensor-row { grid-template-columns: minmax(0, 1fr); }
+  .sensor-unknown-axis { grid-column: 1; }
+  .export-bar > label { min-width: 0; }
+}

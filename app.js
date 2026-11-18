@@ -43,10 +43,164 @@ function populateSensors(){
 $('openFile').onclick=()=>$('fileInput').click();$('fileInput').onchange=e=>{const files=[...e.target.files];if(files.length)task(()=>openRecordings(files.map(file=>({file,relative:file.name}))));e.target.value='';};$('measurement').onchange=()=>task(loadMeasurement);
 $('applyAxis').onclick=()=>task(async()=>{if(!state.meta)throw Error('Open a recording first.');const values=state.meta.kind==='sine'?{low:Number($('axisLow').value),high:Number($('axisHigh').value),logarithmic:$('axisLog').checked}:{step:Number($('axisStep').value)};const name=state.meta.name;state.meta=await request({op:'override',values});state.meta.name=name;updateAxis();await loadMeasurement();status('X-axis test settings applied.');});
 $('editPlots').onclick=()=>{if(!state.m)return status('Open a recording first.',true);drafts=structuredClone(state.panels);buildEditor();$('editor').showModal();};
-function buildEditor(){$('plotEditors').replaceChildren();for(let i=0;i<Number($('plotCount').value);i++){const p=drafts[i],section=element('section',undefined,'plot-editor');section.append(element('h3','Plot '+(i+1)));const row=element('div',undefined,'form-row');const titleLabel=element('label','Title'),title=element('input');title.value=p.title;title.placeholder='Plot '+(i+1);title.oninput=()=>p.title=title.value;titleLabel.append(title);const qlabel=element('label','Quantity'),q=element('select');option(q,'','Choose quantity…');[...new Set(state.m.curves.map(c=>c.quantity))].forEach(v=>option(q,v));q.value=p.quantity;qlabel.append(q);row.append(titleLabel,qlabel);
- for(const [key,text] of [['logx','Log X'],['logy','Log Y']]){const l=element('label',undefined,'check'),input=element('input');input.type='checkbox';input.checked=p[key];input.onchange=()=>p[key]=input.checked;l.append(input,document.createTextNode(text));row.append(l);}section.append(row);const choices=element('div',undefined,'curve-options');
- function showChoices(){choices.replaceChildren();state.m.curves.filter(c=>c.quantity===p.quantity).forEach(c=>{const l=element('label',undefined,'check'),cb=element('input');cb.type='checkbox';cb.checked=p.names.includes(c.name);cb.onchange=()=>{p.names=cb.checked?[...p.names,c.name]:p.names.filter(n=>n!==c.name);};l.append(cb,document.createTextNode(c.name));choices.append(l);});}
- q.onchange=()=>{p.quantity=q.value;p.names=[];const curves=state.m.curves.filter(c=>c.quantity===p.quantity);p.logx=state.meta.kind==='sine';p.logy=curves.some(c=>c.log_y);buildEditor();};showChoices();section.append(choices);$('plotEditors').append(section);}}
+function defaultPlotQuantity(curves) {
+  const accelerationUnits = state.meta.kind === 'random' ? 'g²/Hz' : 'g';
+  const preferred = curves.find(curve => curve.y_unit === accelerationUnits);
+  return preferred?.quantity ?? curves[0]?.quantity ?? '';
+}
+
+function setPlotQuantity(panel, quantity) {
+  panel.quantity = quantity;
+  panel.names = [];
+  panel.logx = state.meta.kind === 'sine';
+  panel.logy = state.m.curves.some(curve => curve.quantity === quantity && curve.log_y);
+}
+
+const sensorOrder = new Intl.Collator('en', {numeric: true, sensitivity: 'base'});
+
+function curveGroups(curves) {
+  const controls = [], responses = new Map(), limits = [], other = [];
+  for (const curve of curves) {
+    const name = curve.name.replace(/(?:\s+\(STEST\)|\s+\[\d+\])+$/i, '').trim();
+    const compact = name.replace(/[\s_-]+/g, '');
+    if (curve.role === 'reference' || /^(reference|alarm|abort|limit)\b/i.test(name)) {
+      limits.push(curve);
+      continue;
+    }
+    if (/^(control|ctrl|steuer)/i.test(compact) || /^C\d+[XYZ]?$/i.test(compact)) {
+      controls.push(curve);
+      continue;
+    }
+
+    // In Response_X1(Z), the parenthesized Z is the physical axis.
+    // Older R_A_1 labels identify a sensor but do not identify an axis.
+    const match = /^(?:triacc|response|resp|accelerometer|acc|r)([xyz]?)(\d+)(?:\(([xyz])\)|([xyz]))?$/i.exec(compact);
+    const legacy = /^R_[A-Z]+_(\d+)$/i.exec(name);
+    if (match || legacy) {
+      const number = Number(match?.[2] ?? legacy[1]);
+      const axis = (match?.[3] || match?.[4] || match?.[1] || '').toUpperCase();
+      if (!responses.has(number)) responses.set(number, {X: [], Y: [], Z: [], other: []});
+      responses.get(number)[axis || 'other'].push(curve);
+    } else {
+      other.push(curve);
+    }
+  }
+
+  const byName = (left, right) => sensorOrder.compare(left.name, right.name);
+  controls.sort((left, right) => {
+    const number = curve => Number(curve.name.match(/\d+/)?.[0] ?? -1);
+    return number(left) - number(right) || byName(left, right);
+  });
+  return {controls, responses: [...responses].sort(([a], [b]) => a - b), limits, other:other.sort(byName)};
+}
+
+function curveCheckbox(curve, panel, label = curve.name, accessibleLabel = label) {
+  const choice = element('label', undefined, 'curve-choice');
+  const checkbox = element('input');
+  checkbox.type = 'checkbox';
+  checkbox.checked = panel.names.includes(curve.name);
+  checkbox.setAttribute('aria-label', accessibleLabel);
+  choice.title = curve.name;
+  checkbox.onchange = () => {
+    panel.names = checkbox.checked
+      ? [...panel.names, curve.name]
+      : panel.names.filter(name => name !== curve.name);
+  };
+  choice.append(checkbox, element('span', label));
+  return choice;
+}
+
+function sensorRow(title, contents, axisRow = false) {
+  const row = element('div', undefined, 'sensor-row');
+  const heading = element('h4', title);
+  const cells = element('div', undefined, axisRow ? 'sensor-axes' : 'sensor-choices');
+  cells.append(...contents);
+  row.append(heading, cells);
+  return row;
+}
+
+function renderCurveChoices(container, panel) {
+  const curves = state.m.curves.filter(curve => curve.quantity === panel.quantity);
+  const {controls, responses, limits, other} = curveGroups(curves);
+  const rows = [];
+  if (controls.length) rows.push(sensorRow('Control', controls.map(c => curveCheckbox(c, panel))));
+
+  for (const [number, channels] of responses) {
+    const title = 'Response ' + number;
+    const axes = ['X', 'Y', 'Z'].map(axis => {
+      const cell = element('div', undefined, 'sensor-axis');
+      const matches = channels[axis];
+      if (!matches.length) {
+        cell.append(element('span', axis + ' —', 'axis-unavailable'));
+      } else {
+        for (const curve of matches) {
+          const label = matches.length === 1 ? axis : axis + ' · ' + curve.name;
+          cell.append(curveCheckbox(curve, panel, label, title + ' ' + axis + ' · ' + curve.name));
+        }
+      }
+      return cell;
+    });
+    const row = sensorRow(title, axes, true);
+    if (channels.other.length) {
+      const unnamedAxes = element('div', undefined, 'sensor-choices sensor-unknown-axis');
+      unnamedAxes.append(...channels.other.map(c => curveCheckbox(c, panel)));
+      row.append(unnamedAxes);
+    }
+    rows.push(row);
+  }
+
+  if (limits.length) rows.push(sensorRow('Reference & limits', limits.map(c => curveCheckbox(c, panel))));
+  if (other.length) rows.push(sensorRow('Other curves', other.map(c => curveCheckbox(c, panel))));
+  container.replaceChildren(...rows);
+}
+
+function buildEditor() {
+  $('plotEditors').replaceChildren();
+  const quantities = [...new Set(state.m.curves.map(curve => curve.quantity))];
+  for (let i = 0; i < Number($('plotCount').value); i++) {
+    const panel = drafts[i];
+    if (!quantities.includes(panel.quantity)) setPlotQuantity(panel, defaultPlotQuantity(state.m.curves));
+
+    const section = element('section', undefined, 'plot-editor');
+    section.append(element('h3', 'Plot ' + (i + 1)));
+    const row = element('div', undefined, 'form-row plot-fields');
+    const titleLabel = element('label', 'Title');
+    const title = element('input');
+    title.value = panel.title;
+    title.placeholder = 'Plot ' + (i + 1);
+    title.oninput = () => panel.title = title.value;
+    titleLabel.append(title);
+
+    const quantityLabel = element('label', 'Quantity');
+    const quantity = element('select');
+    quantities.forEach(value => option(quantity, value));
+    quantity.value = panel.quantity;
+    quantityLabel.append(quantity);
+    row.append(titleLabel, quantityLabel);
+
+    const scales = {};
+    for (const [key, text] of [['logx', 'Log X'], ['logy', 'Log Y']]) {
+      const label = element('label', undefined, 'check');
+      const input = element('input');
+      input.type = 'checkbox';
+      input.checked = panel[key];
+      input.onchange = () => panel[key] = input.checked;
+      scales[key] = input;
+      label.append(input, document.createTextNode(text));
+      row.append(label);
+    }
+
+    const choices = element('div', undefined, 'sensor-list');
+    quantity.onchange = () => {
+      setPlotQuantity(panel, quantity.value);
+      for (const key of Object.keys(scales)) scales[key].checked = panel[key];
+      renderCurveChoices(choices, panel);
+    };
+    renderCurveChoices(choices, panel);
+    section.append(row, choices);
+    $('plotEditors').append(section);
+  }
+}
 $('closeEditor').onclick=()=>$('editor').close();$('applyPlots').onclick=()=>{state.panels=drafts;$('editor').close();renderGraphs();};$('plotCount').onchange=renderGraphs;$('layout').onchange=renderGraphs;
 const colors=['#3779dc','#e78d4a','#7768c6','#34a590','#cf648c','#77963c','#34a8c7','#b28d5c'];
 function trace(c,i){return {x:c.x,y:c.y,name:c.name,type:'scatter',mode:'lines',line:{width:1.5,color:colors[i%colors.length]},connectgaps:false};}
