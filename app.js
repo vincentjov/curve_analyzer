@@ -4,7 +4,7 @@ const records=[]; let activeId=null,recordCounter=0,homeEntries=[];
 const state={mode:'home',meta:null,m:null,index:0,panels:[],analysis:null,files:[],busy:false,stop:false};
 const blank=()=>({title:'',quantity:'',names:[],logx:true,logy:false});
 state.panels=Array.from({length:4},blank);
-let worker,requestId=0,pending=new Map(),syncing=false,drafts=[];
+let worker,requestId=0,pending=new Map(),syncing=false;
 function status(text,error=false){$('status').textContent=text;$('status').classList.toggle('error',error);}
 function element(tag,text,cls){const el=document.createElement(tag);if(text!==undefined)el.textContent=text;if(cls)el.className=cls;return el;}
 function option(select,value,text=value){const o=element('option',text);o.value=value;select.append(o);}
@@ -15,8 +15,23 @@ function startEngine(){worker?.terminate();for(const p of pending.values())p.rej
  request({op:'init'}).then(()=>{$('engineState').textContent='Python engine ready · Files processed locally';status('Ready. Open a recording or choose a workflow.');}).catch(e=>{$('engineState').textContent='Engine unavailable';$('retryEngine').hidden=false;status('Engine could not load. Check that the site’s vendor folder was published completely, then retry. '+e.message,true);});
 }
 function request(req,bytes){if(activeId&&!('record_id' in req))req={...req,record_id:activeId};return new Promise((resolve,reject)=>{const id=++requestId;pending.set(id,{resolve,reject});worker.postMessage({id,request:req,bytes},bytes?[bytes]:[]);});}
-async function task(fn){if(state.busy)return;state.busy=true;document.body.classList.add('busy');try{await fn();}catch(e){status(e.message,true);}finally{state.busy=false;document.body.classList.remove('busy');}}
-function mode(name){stashRecord();state.mode=name;document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active',b.dataset.mode===name));$('home').hidden=name!=='home';$('batch').hidden=name!=='batch';$('workspace').hidden=!['plot','analyze'].includes(name);$('plotTools').hidden=name!=='plot';$('analysisTools').hidden=name!=='analyze';$('pageTitle').textContent={home:'Your data. A clearer view.',plot:'Plot & save',analyze:'Analyze curve',batch:'Save multiple files'}[name];if(['plot','analyze'].includes(name))renderGraphs();}
+async function task(fn){if(state.busy)return;state.busy=true;$('plotTools').inert=true;document.body.classList.add('busy');try{await fn();}catch(e){status(e.message,true);}finally{state.busy=false;$('plotTools').inert=false;document.body.classList.remove('busy');}}
+function mode(name) {
+  stashRecord();
+  state.mode = name;
+  for (const button of document.querySelectorAll('.workspace-nav button')) {
+    const active = button.dataset.mode === name;
+    button.classList.toggle('active', active);
+    if (active) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  }
+  $('home').hidden = name !== 'home';
+  $('batch').hidden = name !== 'batch';
+  $('workspace').hidden = !['plot', 'analyze'].includes(name);
+  $('analysisTools').hidden = name !== 'analyze';
+  $('pageTitle').textContent = {home:'Your data. A clearer view.',plot:'Plot & save',analyze:'Analyze curve',batch:'Save multiple files'}[name];
+  if (!$('workspace').hidden) renderWorkspace();
+}
 document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>chooseMode(b.dataset.mode));document.querySelector('.brand').onclick=e=>{e.preventDefault();mode('home');};
 $('retryEngine').onclick=()=>location.reload();
 function selectedMeasurement(){return Number($('measurement').value)||0;}
@@ -24,16 +39,16 @@ function selectedMeasurement(){return Number($('measurement').value)||0;}
 const controlIds=['plotCount','layout','response','reference','linkX','wheelY','axisLow','axisHigh','axisStep','axisLog'];
 function stashRecord(){const record=records.find(r=>r.id===activeId);if(!record)return;record.saved={meta:state.meta,m:state.m,index:state.index,panels:state.panels,analysis:state.analysis,controls:Object.fromEntries(controlIds.map(id=>[id,$(id).type==='checkbox'?$(id).checked:$(id).value])),thresholds:[...document.querySelectorAll('[data-setting]')].map(el=>[el.dataset.setting,el.value])};if(!state.analysis)delete record.visuals.analyze;}
 function renderTabs(){$('recordTabs').replaceChildren();for(const record of records){const wrap=element('div',undefined,'record-tab'+(record.id===activeId?' active':'')),button=element('button',record.file.name);button.setAttribute('role','tab');button.setAttribute('aria-selected',record.id===activeId?'true':'false');button.title=record.relative;button.onclick=()=>task(()=>activateRecord(record));const close=element('button','×','close-tab');close.setAttribute('aria-label','Close '+record.file.name);close.onclick=()=>task(()=>closeRecord(record));wrap.append(button,close);$('recordTabs').append(wrap);}}
-async function activateRecord(record){stashRecord();activeId=record.id;const saved=record.saved;Object.assign(state,{meta:saved.meta,m:saved.m,index:saved.index,panels:saved.panels,analysis:saved.analysis});$('fileName').textContent=record.relative;$('measurement').replaceChildren();state.meta.measurements.forEach((m,i)=>option($('measurement'),i,m));$('measurement').disabled=false;$('measurement').value=state.index;updateAxis();populateSensors();for(const [id,value] of Object.entries(saved.controls||{})){if($(id).type==='checkbox')$(id).checked=value;else $(id).value=value;}for(const [key,value] of saved.thresholds||[])document.querySelector('[data-setting="'+key+'"]').value=value;renderTabs();renderGraphs();}
-async function closeRecord(record){const index=records.indexOf(record);await request({op:'close',record_id:record.id});records.splice(index,1);if(activeId===record.id){activeId=null;if(records.length)await activateRecord(records[Math.min(index,records.length-1)]);else{Object.assign(state,{meta:null,m:null,index:0,analysis:null,panels:Array.from({length:4},blank)});$('measurement').replaceChildren();$('measurement').disabled=true;$('fileName').textContent='No recording selected';$('axisNote').hidden=true;$('axisSettings').hidden=true;$('response').replaceChildren();$('reference').replaceChildren();renderGraphs();}}renderTabs();}
+async function activateRecord(record){stashRecord();activeId=record.id;const saved=record.saved;Object.assign(state,{meta:saved.meta,m:saved.m,index:saved.index,panels:saved.panels,analysis:saved.analysis});$('fileName').textContent=record.relative;$('measurement').replaceChildren();state.meta.measurements.forEach((m,i)=>option($('measurement'),i,m));$('measurement').disabled=false;$('measurement').value=state.index;updateAxis();populateSensors();for(const [id,value] of Object.entries(saved.controls||{})){if($(id).type==='checkbox')$(id).checked=value;else $(id).value=value;}for(const [key,value] of saved.thresholds||[])document.querySelector('[data-setting="'+key+'"]').value=value;renderTabs();renderWorkspace();}
+async function closeRecord(record){const index=records.indexOf(record);await request({op:'close',record_id:record.id});records.splice(index,1);if(activeId===record.id){activeId=null;if(records.length)await activateRecord(records[Math.min(index,records.length-1)]);else{Object.assign(state,{meta:null,m:null,index:0,analysis:null,panels:Array.from({length:4},blank)});$('measurement').replaceChildren();$('measurement').disabled=true;$('fileName').textContent='No recording selected';$('axisNote').hidden=true;$('axisSettings').hidden=true;$('response').replaceChildren();$('reference').replaceChildren();renderWorkspace();}}renderTabs();}
 async function openRecordings(entries){let opened=0,failed=[];for(const entry of entries){if(!supported(entry.file))continue;const key=entry.relative+'|'+entry.file.size+'|'+entry.file.lastModified;const existing=records.find(r=>r.key===key);if(existing){await activateRecord(existing);continue;}try{await loadFile(entry.file,entry.relative,key);opened++;}catch(e){failed.push(entry.file.name+': '+e.message);}}status(`${opened} recording(s) added · ${records.length} open`+(failed.length?' · Failed: '+failed.join('; '):''),!!failed.length);}
-async function loadFile(file,relative=file.name,key=relative+'|'+file.size+'|'+file.lastModified){stashRecord();const id='record-'+(++recordCounter);status('Decoding '+file.name+'…');const meta=await request({op:'load',record_id:id,name:file.name},await file.arrayBuffer());const record={id,file,relative,key,visuals:{},saved:{}};records.push(record);activeId=id;state.meta=meta;state.analysis=null;state.panels=Array.from({length:4},blank);$('plotCount').value='1';$('layout').value='grid';$('fileName').textContent=relative;$('measurement').replaceChildren();meta.measurements.forEach((m,i)=>option($('measurement'),i,m));$('measurement').disabled=false;state.index=meta.measurements.length-1;$('measurement').value=state.index;updateAxis();await loadMeasurement();stashRecord();renderTabs();if(!['plot','analyze'].includes(state.mode))mode('plot');}
+async function loadFile(file,relative=file.name,key=relative+'|'+file.size+'|'+file.lastModified){stashRecord();const id='record-'+(++recordCounter);status('Decoding '+file.name+'…');const meta=await request({op:'load',record_id:id,name:file.name},await file.arrayBuffer());const record={id,file,relative,key,visuals:{},saved:{}};records.push(record);activeId=id;state.meta=meta;state.analysis=null;state.panels=Array.from({length:4},blank);$('plotCount').value='1';$('layout').value='grid';$('fileName').textContent=relative;$('measurement').replaceChildren();meta.measurements.forEach((m,i)=>option($('measurement'),i,m));$('measurement').disabled=false;state.index=meta.measurements.length-1;$('measurement').value=state.index;updateAxis();await loadMeasurement(true);stashRecord();renderTabs();if(!['plot','analyze'].includes(state.mode))mode('plot');}
 async function chooseMode(name){if(state.busy)return;if(homeEntries.length&&name!=='home'){const entries=homeEntries;homeEntries=[];renderHomeSelection();if(name==='batch'){addFiles(entries);mode(name);}else{mode(name);await task(()=>openRecordings(entries));}}else mode(name);}
 function updateAxis(){$('axisSettings').hidden=false;$('axisNote').hidden=state.meta.axis_verified;$('axisNote').textContent=state.meta.axis_note+' Supply the actual test settings below before analysis or export.';}
-async function loadMeasurement(){const record=records.find(r=>r.id===activeId);if(record)record.visuals={};state.index=selectedMeasurement();state.m=await request({op:'measurement',index:state.index});state.analysis=null;
+async function loadMeasurement(openSetup = false){const record=records.find(r=>r.id===activeId);if(record)record.visuals={};state.index=selectedMeasurement();state.m=await request({op:'measurement',index:state.index});state.analysis=null;
  const normalize=n=>n.replace(/ \(STEST\)$/,'');
  for(const p of state.panels)p.names=p.names.map(n=>state.m.curves.find(c=>normalize(c.name)===normalize(n)&&c.quantity===p.quantity)?.name).filter(Boolean);
- populateSensors();renderGraphs();}
+ populateSensors();renderWorkspace(openSetup);}
 function populateSensors(){
  for(const id of ['response','reference']){$(id).replaceChildren();state.m.curves.filter(c=>c.eligible).forEach(c=>option($(id),c.name));}
  const eligible=state.m.curves.filter(c=>c.eligible);const response=eligible.find(c=>/response|R_[A-Z]_2/i.test(c.name))||eligible[0];const reference=eligible.find(c=>c.name!==response?.name&&/control|^C\d/i.test(c.name))||eligible.find(c=>c!==response);
@@ -42,7 +57,26 @@ function populateSensors(){
 }
 $('openFile').onclick=()=>$('fileInput').click();$('fileInput').onchange=e=>{const files=[...e.target.files];if(files.length)task(()=>openRecordings(files.map(file=>({file,relative:file.name}))));e.target.value='';};$('measurement').onchange=()=>task(loadMeasurement);
 $('applyAxis').onclick=()=>task(async()=>{if(!state.meta)throw Error('Open a recording first.');const values=state.meta.kind==='sine'?{low:Number($('axisLow').value),high:Number($('axisHigh').value),logarithmic:$('axisLog').checked}:{step:Number($('axisStep').value)};const name=state.meta.name;state.meta=await request({op:'override',values});state.meta.name=name;updateAxis();await loadMeasurement();status('X-axis test settings applied.');});
-$('editPlots').onclick=()=>{if(!state.m)return status('Open a recording first.',true);drafts=structuredClone(state.panels);buildEditor();$('editor').showModal();};
+function renderWorkspace(openSetup = false) {
+  const showSetup = state.mode === 'plot' && Boolean(state.m);
+  $('plotTools').hidden = !showSetup;
+  if (showSetup) {
+    const panels = state.panels.slice(0, Number($('plotCount').value));
+    if (openSetup || !panels.some(panel => panel.names.length)) $('plotTools').open = true;
+    buildEditor(openSetup ? 0 : undefined);
+  } else {
+    $('plotEditors').replaceChildren();
+  }
+  renderGraphs();
+}
+
+function openPlotEditor(index) {
+  $('plotTools').open = true;
+  const editor = $('plotEditor' + index);
+  editor.open = true;
+  editor.querySelector('summary').focus();
+}
+
 function defaultPlotQuantity(curves) {
   const accelerationUnits = state.meta.kind === 'random' ? 'g²/Hz' : 'g';
   const preferred = curves.find(curve => curve.y_unit === accelerationUnits);
@@ -94,7 +128,7 @@ function curveGroups(curves) {
   return {controls, responses: [...responses].sort(([a], [b]) => a - b), limits, other:other.sort(byName)};
 }
 
-function curveCheckbox(curve, panel, label = curve.name, accessibleLabel = label) {
+function curveCheckbox(curve, panel, onChange, label = curve.name, accessibleLabel = label) {
   const choice = element('label', undefined, 'curve-choice');
   const checkbox = element('input');
   checkbox.type = 'checkbox';
@@ -105,6 +139,7 @@ function curveCheckbox(curve, panel, label = curve.name, accessibleLabel = label
     panel.names = checkbox.checked
       ? [...panel.names, curve.name]
       : panel.names.filter(name => name !== curve.name);
+    onChange();
   };
   choice.append(checkbox, element('span', label));
   return choice;
@@ -119,11 +154,12 @@ function sensorRow(title, contents, axisRow = false) {
   return row;
 }
 
-function renderCurveChoices(container, panel) {
+function renderCurveChoices(container, panel, onChange) {
+  const checkbox = (curve, label, accessibleLabel) => curveCheckbox(curve, panel, onChange, label, accessibleLabel);
   const curves = state.m.curves.filter(curve => curve.quantity === panel.quantity);
   const {controls, responses, limits, other} = curveGroups(curves);
   const rows = [];
-  if (controls.length) rows.push(sensorRow('Control', controls.map(c => curveCheckbox(c, panel))));
+  if (controls.length) rows.push(sensorRow('Control', controls.map(c => checkbox(c))));
 
   for (const [number, channels] of responses) {
     const title = 'Response ' + number;
@@ -135,7 +171,7 @@ function renderCurveChoices(container, panel) {
       } else {
         for (const curve of matches) {
           const label = matches.length === 1 ? axis : axis + ' · ' + curve.name;
-          cell.append(curveCheckbox(curve, panel, label, title + ' ' + axis + ' · ' + curve.name));
+          cell.append(checkbox(curve, label, title + ' ' + axis + ' · ' + curve.name));
         }
       }
       return cell;
@@ -143,76 +179,207 @@ function renderCurveChoices(container, panel) {
     const row = sensorRow(title, axes, true);
     if (channels.other.length) {
       const unnamedAxes = element('div', undefined, 'sensor-choices sensor-unknown-axis');
-      unnamedAxes.append(...channels.other.map(c => curveCheckbox(c, panel)));
+      unnamedAxes.append(...channels.other.map(c => checkbox(c)));
       row.append(unnamedAxes);
     }
     rows.push(row);
   }
 
-  if (limits.length) rows.push(sensorRow('Reference & limits', limits.map(c => curveCheckbox(c, panel))));
-  if (other.length) rows.push(sensorRow('Other curves', other.map(c => curveCheckbox(c, panel))));
+  if (limits.length) rows.push(sensorRow('Reference & limits', limits.map(c => checkbox(c))));
+  if (other.length) rows.push(sensorRow('Other curves', other.map(c => checkbox(c))));
   container.replaceChildren(...rows);
 }
 
-function buildEditor() {
-  $('plotEditors').replaceChildren();
+function channelCount(panel) {
+  const count = panel.names.length;
+  return count ? count + (count === 1 ? ' channel' : ' channels') : 'Select channels';
+}
+
+function buildEditor(openIndex) {
+  const editors = $('plotEditors');
+  const count = Number($('plotCount').value);
+  const previousIndex = Number(editors.querySelector('.plot-editor[open]')?.dataset.index ?? 0);
+  const activeIndex = openIndex ?? Math.min(previousIndex, count - 1);
   const quantities = [...new Set(state.m.curves.map(curve => curve.quantity))];
-  for (let i = 0; i < Number($('plotCount').value); i++) {
-    const panel = drafts[i];
+  const sections = [];
+  for (let i = 0; i < count; i++) {
+    const panel = state.panels[i];
     if (!quantities.includes(panel.quantity)) setPlotQuantity(panel, defaultPlotQuantity(state.m.curves));
 
-    const section = element('section', undefined, 'plot-editor');
-    section.append(element('h3', 'Plot ' + (i + 1)));
-    const row = element('div', undefined, 'form-row plot-fields');
-    const titleLabel = element('label', 'Title');
-    const title = element('input');
-    title.value = panel.title;
-    title.placeholder = 'Plot ' + (i + 1);
-    title.oninput = () => panel.title = title.value;
-    titleLabel.append(title);
+    const section = element('details', undefined, 'plot-editor');
+    section.id = 'plotEditor' + i;
+    section.dataset.index = i;
+    section.setAttribute('name', 'plot-editors');
+    section.open = i === activeIndex;
+    const summary = element('summary');
+    const countLabel = element('span', channelCount(panel), 'plot-channel-count');
+    summary.append(element('strong', 'Plot ' + (i + 1)), countLabel);
+    section.append(summary);
 
+    const body = element('div', undefined, 'plot-editor-body');
     const quantityLabel = element('label', 'Quantity');
     const quantity = element('select');
     quantities.forEach(value => option(quantity, value));
     quantity.value = panel.quantity;
     quantityLabel.append(quantity);
-    row.append(titleLabel, quantityLabel);
+
+    const settings = element('details', undefined, 'plot-settings');
+    settings.append(element('summary', 'Title & axis scales'));
+    const fields = element('div', undefined, 'plot-settings-fields');
+    const titleLabel = element('label', 'Title');
+    const title = element('input');
+    title.value = panel.title;
+    title.placeholder = 'Plot ' + (i + 1);
+    title.onchange = () => {
+      panel.title = title.value;
+      renderPlot(i);
+    };
+    titleLabel.append(title);
+    fields.append(titleLabel);
 
     const scales = {};
+    const scaleFields = element('div', undefined, 'plot-scales');
     for (const [key, text] of [['logx', 'Log X'], ['logy', 'Log Y']]) {
       const label = element('label', undefined, 'check');
       const input = element('input');
       input.type = 'checkbox';
       input.checked = panel[key];
-      input.onchange = () => panel[key] = input.checked;
+      input.onchange = () => {
+        panel[key] = input.checked;
+        renderPlot(i);
+      };
       scales[key] = input;
       label.append(input, document.createTextNode(text));
-      row.append(label);
+      scaleFields.append(label);
     }
+    fields.append(scaleFields);
+    settings.append(fields);
 
     const choices = element('div', undefined, 'sensor-list');
+    const updateChannels = () => {
+      countLabel.textContent = channelCount(panel);
+      renderPlot(i);
+      updateGraphActions();
+    };
     quantity.onchange = () => {
       setPlotQuantity(panel, quantity.value);
       for (const key of Object.keys(scales)) scales[key].checked = panel[key];
-      renderCurveChoices(choices, panel);
+      renderCurveChoices(choices, panel, updateChannels);
+      updateChannels();
     };
-    renderCurveChoices(choices, panel);
-    section.append(row, choices);
-    $('plotEditors').append(section);
+    renderCurveChoices(choices, panel, updateChannels);
+    if (!state.m.curves.length) choices.append(element('p', 'No channels are available in this measurement.', 'plot-instructions'));
+    body.append(quantityLabel, choices, settings);
+    section.append(body);
+    sections.push(section);
   }
+  editors.replaceChildren(...sections);
 }
-$('closeEditor').onclick=()=>$('editor').close();$('applyPlots').onclick=()=>{state.panels=drafts;$('editor').close();renderGraphs();};$('plotCount').onchange=renderGraphs;$('layout').onchange=renderGraphs;
+
+$('plotCount').onchange = () => {
+  buildEditor();
+  renderGraphs();
+};
+$('layout').onchange = renderGraphs;
+
 const colors=['#3779dc','#e78d4a','#7768c6','#34a590','#cf648c','#77963c','#34a8c7','#b28d5c'];
 function trace(c,i){return {x:c.x,y:c.y,name:c.name,type:'scatter',mode:'lines',line:{width:1.5,color:colors[i%colors.length]},connectgaps:false};}
-function chartCard(traces,title,xlabel,ylabel,logx=false,logy=false){const card=element('div',undefined,'graph-card'),div=element('div',undefined,'chart');card.append(div);$('graphs').append(card);if(!window.Plotly){card.replaceChildren(element('p','Graph library unavailable. Check that the local Plotly file was published and reload.','notice'));return;}
+function showGraphCard(card, index) {
+  const previous = $('graphs').children[index];
+  if (!previous) {
+    $('graphs').append(card);
+    return;
+  }
+  const chart = previous.querySelector('.chart');
+  if (chart) window.Plotly?.purge(chart);
+  previous.replaceWith(card);
+}
+
+function chartCard(traces,title,xlabel,ylabel,logx=false,logy=false,index){const card=element('div',undefined,'graph-card'),div=element('div',undefined,'chart');card.append(div);showGraphCard(card,index);if(!window.Plotly){card.replaceChildren(element('p','Graph library unavailable. Check that the local Plotly file was published and reload.','notice'));return;}
  const layout={title:{text:title,font:{size:14,color:'#4a5b74'},x:.05},margin:{l:75,r:25,t:50,b:65},paper_bgcolor:'#fff',plot_bgcolor:'#fff',font:{family:'-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',size:10,color:'#73829a'},xaxis:{title:xlabel,type:logx?'log':'linear',gridcolor:'#eef1f6',zerolinecolor:'#e7edf5'},yaxis:{title:ylabel,type:logy?'log':'linear',gridcolor:'#eef1f6',zerolinecolor:'#e7edf5'},legend:{orientation:'h',y:-.22,font:{size:9}},hovermode:'closest',dragmode:'zoom',showlegend:true};
- const record=records.find(r=>r.id===activeId);if(record&&record.visuals[state.mode])record.visuals[state.mode].push({data:structuredClone(traces),layout:structuredClone(layout)});
+ const visuals=records.find(r=>r.id===activeId)?.visuals[state.mode];
+ if(visuals){
+   const snapshot={data:structuredClone(traces),layout:structuredClone(layout)};
+   if(index===undefined)visuals.push(snapshot);
+   else visuals[index]=snapshot;
+ }
  Plotly.newPlot(div,traces,layout,{responsive:true,displaylogo:false,scrollZoom:false,modeBarButtonsToRemove:['lasso2d','select2d'],toImageButtonOptions:{format:'png',scale:2}}).then(()=>{
+ if(!div.isConnected)return;
  div.on('plotly_relayout',event=>{if(syncing||!$('linkX').checked||!('xaxis.range[0]'in event||'xaxis.range'in event||'xaxis.autorange'in event))return;syncing=true;const updates=Object.fromEntries(Object.entries(event).filter(([k])=>k.startsWith('xaxis.')));Promise.all([...document.querySelectorAll('.chart')].filter(other=>other!==div&&other._fullLayout?.xaxis.type===div._fullLayout.xaxis.type&&other.dataset.xunit===div.dataset.xunit).map(other=>Plotly.relayout(other,updates))).finally(()=>syncing=false);});
  div.addEventListener('wheel',event=>{if(!$('wheelY').checked&&!event.shiftKey&&!event.ctrlKey)return;event.preventDefault();const axis=event.shiftKey?'xaxis':'yaxis',full=div._fullLayout[axis];if(!full)return;const range=full.range,ratio=event.deltaY>0?1.18:1/1.18,rect=div.getBoundingClientRect();const pixel=axis==='xaxis'?event.clientX-rect.left:event.clientY-rect.top;let fraction=(pixel-full._offset)/full._length;if(axis==='yaxis')fraction=1-fraction;fraction=Math.max(0,Math.min(1,fraction));const center=range[0]+fraction*(range[1]-range[0]);Plotly.relayout(div,{[axis+'.range']:[center+(range[0]-center)*ratio,center+(range[1]-center)*ratio],[axis+'.autorange']:false});},{passive:false});
  });div.dataset.xunit=xlabel;return div;}
 function purgeGraphs(){document.querySelectorAll('.chart').forEach(d=>window.Plotly?.purge(d));$('graphs').replaceChildren();}
-function renderGraphs(){const record=records.find(r=>r.id===activeId);if(record&&['plot','analyze'].includes(state.mode))record.visuals[state.mode]=[];purgeGraphs();$('results').hidden=true;if(state.mode==='analyze'){renderAnalysis();return;}const count=Number($('plotCount').value);$('graphs').className='graphs '+({1:'one',2:'two',3:'three'}[count]||'')+($('layout').value==='stack'?' stack':'');$('graphHint').textContent='Drag to zoom · Double-click to reset · Wheel: Y · Shift + wheel: X';for(let i=0;i<count;i++){const p=state.panels[i],curves=(state.m?.curves||[]).filter(c=>p.names.includes(c.name));if(!curves.length){const c=element('div',undefined,'graph-card empty-chart');c.append(element('strong',p.title||'Plot '+(i+1)),element('span','Choose curves in Edit plots'));$('graphs').append(c);}else chartCard(curves.map(trace),p.title||'Plot '+(i+1),curves[0].x_unit,curves[0].y_unit,p.logx,p.logy);}}
+function updateGraphActions() {
+  $('graphActions').hidden = state.mode === 'plot' && !$('graphs').querySelector('.chart');
+  if (state.mode === 'plot') {
+    $('graphHint').textContent = 'Drag to zoom · Double-click to reset · Wheel: Y · Shift + wheel: X';
+  }
+}
+
+function renderPlot(index) {
+  const panel = state.panels[index];
+  const title = panel.title || 'Plot ' + (index + 1);
+  const curves = state.m.curves.filter(curve => curve.quantity === panel.quantity && panel.names.includes(curve.name));
+  if (curves.length) {
+    chartCard(curves.map(trace), title, curves[0].x_unit, curves[0].y_unit, panel.logx, panel.logy, index);
+    return;
+  }
+
+  const visuals = records.find(record => record.id === activeId)?.visuals.plot;
+  if (visuals) delete visuals[index];
+  const card = element('div', undefined, 'graph-card empty-chart');
+  card.append(element('strong', title));
+  if (state.m.curves.length) {
+    card.append(element('span', 'Select channels to display in this plot.'));
+    const button = element('button', 'Select channels');
+    button.setAttribute('aria-label', 'Select channels for Plot ' + (index + 1));
+    button.onclick = () => openPlotEditor(index);
+    card.append(button);
+  } else {
+    card.append(element('span', 'No channels are available in this measurement.'));
+  }
+  showGraphCard(card, index);
+}
+
+function renderGraphs() {
+  const record = records.find(r => r.id === activeId);
+  if (record && ['plot', 'analyze'].includes(state.mode)) record.visuals[state.mode] = [];
+  purgeGraphs();
+  $('results').hidden = true;
+  if (state.mode === 'analyze') {
+    updateGraphActions();
+    renderAnalysis();
+    return;
+  }
+  if (state.mode !== 'plot') return;
+
+  const count = Number($('plotCount').value);
+  $('graphs').className = 'graphs ' + ({1:'one',2:'two',3:'three'}[count] || '') + ($('layout').value === 'stack' ? ' stack' : '');
+  if (state.m) {
+    for (let i = 0; i < count; i++) renderPlot(i);
+  } else {
+    $('graphs').className = 'graphs one';
+    const card = element('div', undefined, 'graph-card empty-chart');
+    card.append(
+      element('strong', 'Open a recording to get started'),
+      element('span', 'Then choose how many plots to show and select channels in Edit plots.')
+    );
+    $('graphs').append(card);
+  }
+  updateGraphActions();
+}
+
+let graphWidth = 0;
+new ResizeObserver(([entry]) => {
+  const width = entry.contentRect.width;
+  if (width === graphWidth) return;
+  graphWidth = width;
+  if (!width) return;
+  for (const chart of $('graphs').querySelectorAll('.chart')) {
+    if (chart._fullLayout) window.Plotly.Plots.resize(chart).catch(() => {});
+  }
+}).observe($('graphArea'));
+
 $('runAnalysis').onclick=()=>task(async()=>{if(!state.m)throw Error('Open a sine recording first.');if($('response').value===$('reference').value)throw Error('Choose different response and reference sensors.');state.analysis=null;renderGraphs();status('Screening resonance candidates…');const settings={};document.querySelectorAll('[data-setting]').forEach(el=>settings[el.dataset.setting]=Number(el.value));state.analysis=await request({op:'analyze',index:state.index,response:$('response').value,reference:$('reference').value,settings});if(state.mode==='analyze')renderGraphs();status('Screening finished. Review candidate reasons below the graphs.');});
 // Changing a sensor or threshold invalidates displayed results and their export.
 for(const id of ['response','reference','thresholds'])$(id).addEventListener('change',()=>{state.analysis=null;if(state.mode==='analyze')renderGraphs();});
@@ -222,7 +389,7 @@ $('resetZoom').onclick=()=>document.querySelectorAll('.chart').forEach(d=>window
 function closeExpanded(){$('graphArea').classList.remove('expanded');$('graphArea').querySelector('.close-expanded')?.remove();window.dispatchEvent(new Event('resize'));}
 $('expandGraph').onclick=()=>{$('graphArea').classList.add('expanded');const close=element('button','✕ Close expanded view','close-expanded');close.onclick=closeExpanded;$('graphArea').prepend(close);window.dispatchEvent(new Event('resize'));};document.addEventListener('keydown',e=>{if(e.key==='Escape')closeExpanded();});
 function download(result){const bytes=Uint8Array.from(atob(result.data),c=>c.charCodeAt(0));const url=URL.createObjectURL(new Blob([bytes]));const a=element('a');a.href=url;a.download=result.name;a.click();setTimeout(()=>URL.revokeObjectURL(url),60000);}
-$('exportData').onclick=()=>task(async()=>{if(!state.m)throw Error('Open a recording first.');if(!state.meta.axis_verified)throw Error('Supply X-axis settings before export.');const analysis=state.mode==='analyze';if(analysis&&!state.analysis)throw Error('Run analysis first.');const names=[...new Set(state.panels.slice(0,Number($('plotCount').value)).flatMap(p=>p.names))];if(!analysis&&!names.length)throw Error('Choose curves in Edit plots first.');download(await request({op:'export',index:state.index,names,analysis,format:$('dataFormat').value}));status('Download prepared.');});
+$('exportData').onclick=()=>task(async()=>{if(!state.m)throw Error('Open a recording first.');if(!state.meta.axis_verified)throw Error('Supply X-axis settings before export.');const analysis=state.mode==='analyze';if(analysis&&!state.analysis)throw Error('Run analysis first.');const names=[...new Set(state.panels.slice(0,Number($('plotCount').value)).flatMap(p=>p.names))];if(!analysis&&!names.length)throw Error('Select channels in Edit plots first.');download(await request({op:'export',index:state.index,names,analysis,format:$('dataFormat').value}));status('Download prepared.');});
 $('exportGraph').onclick=()=>task(async()=>{const graphs=[...document.querySelectorAll('.chart')];if(!graphs.length)throw Error('Draw a graph first.');for(let i=0;i<graphs.length;i++)await Plotly.downloadImage(graphs[i],{format:$('graphFormat').value,filename:'curve_plot_'+(i+1),width:1400,height:800,scale:2});status('Graph downloads prepared. Your browser may ask to allow multiple downloads.');});$('printGraphs').onclick=()=>window.print();
 const supported=f=>/\.(rsn|rrn|rcs|xlsx|xlsm)$/i.test(f.name);
 function addFiles(entries){let skipped=0;for(const item of entries){if(!supported(item.file)){skipped++;continue;}const key=item.relative+'|'+item.file.size+'|'+item.file.lastModified;if(!state.files.some(x=>x.key===key))state.files.push({...item,key});}renderQueue();status(`${state.files.length} recording(s) queued.${skipped?' '+skipped+' unsupported files skipped.':''}`);}
@@ -261,7 +428,7 @@ window.addEventListener('drop',e=>{
  task(async()=>{let all=[];if(entries.length){for(const entry of entries)all.push(...await readEntry(entry));}else all=files.map(file=>({file,relative:file.name}));if(targetMode==='home')stageHome(all);else if(targetMode==='batch')addFiles(all);else await openRecordings(all);});
 });
 $('exportAllGraphs').onclick=()=>task(async()=>{
- stashRecord();const jobs=records.flatMap((record,i)=>Object.entries(record.visuals).flatMap(([mode,graphs])=>graphs.map((graph,j)=>({graph,name:String(i+1).padStart(2,'0')+'_'+record.file.name.replace(/[^a-zA-Z0-9._-]/g,'_')+'/'+mode+'_plot_'+(j+1)}))));
+ stashRecord();const jobs=records.flatMap((record,i)=>Object.entries(record.visuals).flatMap(([mode,graphs])=>graphs.filter(Boolean).map((graph,j)=>({graph,name:String(i+1).padStart(2,'0')+'_'+record.file.name.replace(/[^a-zA-Z0-9._-]/g,'_')+'/'+mode+'_plot_'+(j+1)}))));
  if(!jobs.length)throw Error('Choose curves or run analysis in at least one tab first.');
  const format=$('graphFormat').value,images=[];const host=element('div');host.style.cssText='position:fixed;left:-20000px;top:0;width:1400px;height:800px';document.body.append(host);
  try{for(let i=0;i<jobs.length;i++){status('Preparing plot '+(i+1)+' of '+jobs.length+'…');await Plotly.newPlot(host,structuredClone(jobs[i].graph.data),{...structuredClone(jobs[i].graph.layout),width:1400,height:800},{staticPlot:true});const url=await Plotly.toImage(host,{format,width:1400,height:800,scale:2});const blob=await (await fetch(url)).blob();const bytes=new Uint8Array(await blob.arrayBuffer());let binary='';for(let start=0;start<bytes.length;start+=32768)binary+=String.fromCharCode(...bytes.subarray(start,start+32768));images.push({name:jobs[i].name+'.'+format,data:btoa(binary)});Plotly.purge(host);}download(await request({op:'images_zip',images}));status(jobs.length+' plots saved from '+records.length+' open recording tabs in one ZIP.');}finally{Plotly.purge(host);host.remove();}
