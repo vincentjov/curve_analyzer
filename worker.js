@@ -14,7 +14,8 @@ async function initialize() {
     py.unpackArchive(await r.arrayBuffer(),'zip',{extractDir:'/app'});
   }
   const files=['curve_io.py','resonance_engine.py','vcpnt_common.py','web_bridge.py','decoders/__init__.py','decoders/vcpnt_sine.py','decoders/vcpnt_random.py','decoders/vcpnt_shock.py'];
-  await Promise.all(files.map(async name=>{const r=await fetch(new URL('python/'+name,import.meta.url));if(!r.ok)throw Error('Cannot load '+name);py.FS.writeFile('/app/'+name,await r.text());}));
+  const version = new URL(import.meta.url).search;
+  await Promise.all(files.map(async name=>{const r=await fetch(new URL('python/'+name+version,import.meta.url));if(!r.ok)throw Error('Cannot load '+name);py.FS.writeFile('/app/'+name,await r.text());}));
   await py.runPythonAsync("import sys\nsys.path.insert(0, '/app')\nfrom web_bridge import handle");
   return py;
 }

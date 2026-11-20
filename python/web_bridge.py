@@ -30,7 +30,8 @@ def clean(value):
 
 def metadata():
     return dict(name=current.path.name, kind=current.kind, axis_verified=current.axis_verified,
-                axis_note=current.axis_note, measurements=[m.label for m in current.measurements],
+                axis_note=current.axis_note, sweep_spacing=current.sweep_spacing,
+                measurements=[m.label for m in current.measurements],
                 settings=asdict(Settings()))
 
 def measurement(index):

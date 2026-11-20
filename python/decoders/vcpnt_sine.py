@@ -104,8 +104,9 @@ class SineHeader:
                     self.sweep_rate = float(m.group(1).replace(",", "."))
                     self.sweep_unit = m.group(2)
                     self.sweep_type = "linear" if "Hz" in m.group(2) else "logarithmic"
-                    if self.sweep_unit in ("Oct/min", "Hz/min"):
-                        self.sweep_rate_source = "Schedule.SweepRate"
+                    self.sweep_rate_source = (
+                        "Schedule.SweepRate" if self.sweep_unit in ("Oct/min", "Hz/min") else None
+                    )
                 m = re.match(r"Breakpoint\.Freq:\t([\d,]+) Hz", l)
                 if m:
                     self.breakpoints.append((float(m.group(1).replace(",", ".")), None))

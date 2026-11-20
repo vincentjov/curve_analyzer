@@ -54,6 +54,7 @@ class CurveData:
     measurements: list[Measurement]
     axis_verified: bool = True
     axis_note: str = "X axis read from the file."
+    sweep_spacing: str | None = None
 
     def resonance_channels(self, measurement):
         if self.kind != "sine":
@@ -118,16 +119,18 @@ def read_data(path) -> CurveData:
     except (struct.error, IndexError, OverflowError, ZeroDivisionError) as error:
         raise ValueError("Could not decode this recording: truncated data or a binary layout unsupported by the supplied decoder.") from error
     header = raw["header"] or []
+    sweep_spacing = None
     if kind == "sine":
         hdr = decoder.SineHeader(header)
-        verified = len(hdr.breakpoints) >= 2 and hdr.sweep_rate_source is not None
+        if hdr.sweep_rate_source is not None:
+            sweep_spacing = hdr.sweep_type
+        verified = len(hdr.breakpoints) >= 2 and sweep_spacing is not None
     elif kind == "random":
         verified = decoder.RandomHeader(header).resolution_source is not None
     else:
         verified = raw["layout"].get("sample_rate_source") is not None
     note = "X axis reconstructed from the embedded setup." if verified else (
-        "X-axis setup is incomplete: the decoder may use default frequency or time settings. "
-        "Use Set X axis to supply the actual test settings; sine screening is disabled until then.")
+        "X-axis setup is incomplete. The preview may use estimated frequencies or times.")
     measurements = []
     for i, m in enumerate(raw["measurements"], 1):
         curves = _curves(m["channels"])
@@ -155,7 +158,7 @@ def read_data(path) -> CurveData:
         measurements.append(Measurement(label, curves, notes, i, dt))
     if not measurements:
         raise ValueError("No plottable measurement channels were decoded.")
-    return CurveData(path, kind, measurements, verified, note)
+    return CurveData(path, kind, measurements, verified, note, sweep_spacing=sweep_spacing)
 
 
 def override_axis(data, *, low=None, high=None, logarithmic=True, step=None):
