@@ -2,7 +2,9 @@
 const $=id=>document.getElementById(id);
 const records=[]; let activeId=null,recordCounter=0,homeEntries=[];
 const state={mode:'home',meta:null,m:null,index:0,panels:[],analysis:null,files:[],busy:false,stop:false};
-const blank=()=>({title:'',quantity:'',names:[],logx:true,logy:false});
+const blank=()=>({title:'',quantity:'',names:[],curveLabels:new Map(),logx:true,logy:false});
+const sourceChannelName = name => name.replace(/ \(STEST\)$/, '');
+const originalPlotTitle = index => 'Plot ' + (index + 1);
 state.panels=Array.from({length:4},blank);
 let worker,requestId=0,pending=new Map(),syncing=false;
 function status(text,error=false){$('status').textContent=text;$('status').classList.toggle('error',error);}
@@ -46,8 +48,7 @@ async function loadFile(file,relative=file.name,key=relative+'|'+file.size+'|'+f
 async function chooseMode(name){if(state.busy)return;if(homeEntries.length&&name!=='home'){const entries=homeEntries;homeEntries=[];renderHomeSelection();if(name==='batch'){addFiles(entries);mode(name);}else{mode(name);await task(()=>openRecordings(entries));}}else mode(name);}
 function updateAxis(){$('axisSettings').hidden=false;$('axisNote').hidden=state.meta.axis_verified;$('axisNote').textContent=state.meta.axis_note+' Supply the actual test settings below before analysis or export.';}
 async function loadMeasurement(openSetup = false){const record=records.find(r=>r.id===activeId);if(record)record.visuals={};state.index=selectedMeasurement();state.m=await request({op:'measurement',index:state.index});state.analysis=null;
- const normalize=n=>n.replace(/ \(STEST\)$/,'');
- for(const p of state.panels)p.names=p.names.map(n=>state.m.curves.find(c=>normalize(c.name)===normalize(n)&&c.quantity===p.quantity)?.name).filter(Boolean);
+ for(const p of state.panels)p.names=p.names.map(n=>state.m.curves.find(c=>sourceChannelName(c.name)===sourceChannelName(n)&&c.quantity===p.quantity)?.name).filter(Boolean);
  populateSensors();renderWorkspace(openSetup);}
 function populateSensors(){
  for(const id of ['response','reference']){$(id).replaceChildren();state.m.curves.filter(c=>c.eligible).forEach(c=>option($(id),c.name));}
@@ -213,7 +214,7 @@ function buildEditor(openIndex) {
     section.open = i === activeIndex;
     const summary = element('summary');
     const countLabel = element('span', channelCount(panel), 'plot-channel-count');
-    summary.append(element('strong', 'Plot ' + (i + 1)), countLabel);
+    summary.append(element('strong', originalPlotTitle(i)), countLabel);
     section.append(summary);
 
     const body = element('div', undefined, 'plot-editor-body');
@@ -228,12 +229,10 @@ function buildEditor(openIndex) {
     const fields = element('div', undefined, 'plot-settings-fields');
     const titleLabel = element('label', 'Title');
     const title = element('input');
+    title.id = 'plotTitle' + i;
     title.value = panel.title;
-    title.placeholder = 'Plot ' + (i + 1);
-    title.onchange = () => {
-      panel.title = title.value;
-      renderPlot(i);
-    };
+    title.placeholder = originalPlotTitle(i);
+    title.onchange = () => updatePlotTitle(i, title.value);
     titleLabel.append(title);
     fields.append(titleLabel);
 
@@ -295,16 +294,19 @@ function showGraphCard(card, index) {
   previous.replaceWith(card);
 }
 
-function chartCard(traces,title,xlabel,ylabel,logx=false,logy=false,index){const card=element('div',undefined,'graph-card'),div=element('div',undefined,'chart');card.append(div);showGraphCard(card,index);if(!window.Plotly){card.replaceChildren(element('p','Graph library unavailable. Check that the local Plotly file was published and reload.','notice'));return;}
- const layout={title:{text:title,font:{size:14,color:'#4a5b74'},x:.05},margin:{l:75,r:25,t:50,b:65},paper_bgcolor:'#fff',plot_bgcolor:'#fff',font:{family:'-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',size:10,color:'#73829a'},xaxis:{title:xlabel,type:logx?'log':'linear',gridcolor:'#eef1f6',zerolinecolor:'#e7edf5'},yaxis:{title:ylabel,type:logy?'log':'linear',gridcolor:'#eef1f6',zerolinecolor:'#e7edf5'},legend:{orientation:'h',y:-.22,font:{size:9}},hovermode:'closest',dragmode:'zoom',showlegend:true};
+function chartCard(traces,title,xlabel,ylabel,logx=false,logy=false,plot){
+ const index=plot?.index;
+ const card=element('div',undefined,'graph-card'),div=element('div',undefined,'chart');card.append(div);showGraphCard(card,index);if(!window.Plotly){card.replaceChildren(element('p','Graph library unavailable. Check that the local Plotly file was published and reload.','notice'));return;}
+ const layout={title:{text:title,font:{size:14,color:'#4a5b74'},x:.05},margin:{l:75,r:25,t:50,b:65},paper_bgcolor:'#fff',plot_bgcolor:'#fff',font:{family:'-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',size:10,color:'#73829a'},xaxis:{title:xlabel,type:logx?'log':'linear',gridcolor:'#eef1f6',zerolinecolor:'#e7edf5'},yaxis:{title:ylabel,type:logy?'log':'linear',gridcolor:'#eef1f6',zerolinecolor:'#e7edf5'},legend:{orientation:'h',y:-.22,font:{size:plot?11:9}},hovermode:'closest',dragmode:'zoom',showlegend:true};
  const visuals=records.find(r=>r.id===activeId)?.visuals[state.mode];
+ const snapshot=visuals&&{data:structuredClone(traces),layout:structuredClone(layout)};
  if(visuals){
-   const snapshot={data:structuredClone(traces),layout:structuredClone(layout)};
    if(index===undefined)visuals.push(snapshot);
    else visuals[index]=snapshot;
  }
- Plotly.newPlot(div,traces,layout,{responsive:true,displaylogo:false,scrollZoom:false,modeBarButtonsToRemove:['lasso2d','select2d'],toImageButtonOptions:{format:'png',scale:2}}).then(()=>{
+ Plotly.newPlot(div,traces,layout,{responsive:true,displaylogo:false,scrollZoom:false,edits:{titleText:!!plot,legendText:!!plot},modeBarButtonsToRemove:['lasso2d','select2d'],toImageButtonOptions:{format:'png',scale:2}}).then(()=>{
  if(!div.isConnected)return;
+ if(plot)bindPlotLabels(div,plot,snapshot);
  div.on('plotly_relayout',event=>{if(syncing||!$('linkX').checked||!('xaxis.range[0]'in event||'xaxis.range'in event||'xaxis.autorange'in event))return;syncing=true;const updates=Object.fromEntries(Object.entries(event).filter(([k])=>k.startsWith('xaxis.')));Promise.all([...document.querySelectorAll('.chart')].filter(other=>other!==div&&other._fullLayout?.xaxis.type===div._fullLayout.xaxis.type&&other.dataset.xunit===div.dataset.xunit).map(other=>Plotly.relayout(other,updates))).finally(()=>syncing=false);});
  div.addEventListener('wheel',event=>{if(!$('wheelY').checked&&!event.shiftKey&&!event.ctrlKey)return;event.preventDefault();const axis=event.shiftKey?'xaxis':'yaxis',full=div._fullLayout[axis];if(!full)return;const range=full.range,ratio=event.deltaY>0?1.18:1/1.18,rect=div.getBoundingClientRect();const pixel=axis==='xaxis'?event.clientX-rect.left:event.clientY-rect.top;let fraction=(pixel-full._offset)/full._length;if(axis==='yaxis')fraction=1-fraction;fraction=Math.max(0,Math.min(1,fraction));const center=range[0]+fraction*(range[1]-range[0]);Plotly.relayout(div,{[axis+'.range']:[center+(range[0]-center)*ratio,center+(range[1]-center)*ratio],[axis+'.autorange']:false});},{passive:false});
  });div.dataset.xunit=xlabel;return div;}
@@ -312,23 +314,106 @@ function purgeGraphs(){document.querySelectorAll('.chart').forEach(d=>window.Plo
 function updateGraphActions() {
   $('graphActions').hidden = state.mode === 'plot' && !$('graphs').querySelector('.chart');
   if (state.mode === 'plot') {
-    $('graphHint').textContent = 'Drag to zoom · Double-click to reset · Wheel: Y · Shift + wheel: X';
+    $('graphHint').textContent = 'Click a title or legend label to rename it. Use the legend swatch to show or hide a curve.';
   }
+}
+
+function rememberPlotTitle(index, value) {
+  const original = originalPlotTitle(index);
+  const title = value.trim();
+  const panel = state.panels[index];
+  panel.title = title === original ? '' : title;
+  const sidebarTitle = $('plotTitle' + index);
+  if (sidebarTitle) sidebarTitle.value = panel.title;
+  return panel.title || original;
+}
+
+function updatePlotTitle(index, value) {
+  const title = rememberPlotTitle(index, value);
+  const chart = $('graphs').children[index]?.querySelector('.chart');
+  if (chart?._fullLayout) {
+    Plotly.relayout(chart, {'title.text':title});
+  } else {
+    const inlineTitle = $('inlinePlotTitle' + index);
+    if (inlineTitle) inlineTitle.value = title;
+  }
+}
+
+function curveLabelKey(curve) {
+  return JSON.stringify([curve.quantity, sourceChannelName(curve.name)]);
+}
+
+const editablePlotLabels = '.gtitle, .legendtext';
+function bindPlotLabels(chart, {index, panel, curves}, snapshot) {
+  const makeLabelsFocusable = () => {
+    for (const label of chart.querySelectorAll(editablePlotLabels)) {
+      label.setAttribute('tabindex', '0');
+      label.setAttribute('role', 'button');
+      const kind = label.classList.contains('gtitle') ? 'plot' : 'curve';
+      label.setAttribute('aria-label', 'Rename ' + kind + ' ' + label.textContent.trim());
+    }
+  };
+  makeLabelsFocusable();
+  chart.on('plotly_afterplot', makeLabelsFocusable);
+  chart.addEventListener('keydown', event => {
+    if (!['Enter', ' '].includes(event.key) || !event.target.matches(editablePlotLabels)) return;
+    event.preventDefault();
+    event.target.dispatchEvent(new MouseEvent('click', {bubbles:true}));
+  });
+
+  chart.on('plotly_relayout', event => {
+    const edited = event['title.text'];
+    if (typeof edited !== 'string') return;
+    const title = rememberPlotTitle(index, edited);
+    if (snapshot) snapshot.layout.title.text = title;
+    if (edited !== title) Plotly.relayout(chart, {'title.text':title});
+  });
+
+  chart.on('plotly_restyle', ([changes, indices]) => {
+    if (!Object.hasOwn(changes, 'name')) return;
+    const labels = indices.map(traceIndex => {
+      const curve = curves[traceIndex];
+      const label = chart.data[traceIndex].name.trim() || curve.name;
+      const key = curveLabelKey(curve);
+      if (label === curve.name) panel.curveLabels.delete(key);
+      else panel.curveLabels.set(key, label);
+      if (snapshot) snapshot.data[traceIndex].name = label;
+      return label;
+    });
+    if (labels.some((label, i) => label !== chart.data[indices[i]].name)) {
+      Plotly.restyle(chart, {name:labels}, indices);
+    }
+  });
 }
 
 function renderPlot(index) {
   const panel = state.panels[index];
-  const title = panel.title || 'Plot ' + (index + 1);
+  const title = panel.title || originalPlotTitle(index);
   const curves = state.m.curves.filter(curve => curve.quantity === panel.quantity && panel.names.includes(curve.name));
   if (curves.length) {
-    chartCard(curves.map(trace), title, curves[0].x_unit, curves[0].y_unit, panel.logx, panel.logy, index);
+    const traces = curves.map((curve, i) => ({
+      ...trace(curve, i),
+      name: panel.curveLabels.get(curveLabelKey(curve)) ?? curve.name
+    }));
+    chartCard(traces, title, curves[0].x_unit, curves[0].y_unit, panel.logx, panel.logy, {index, panel, curves});
     return;
   }
 
   const visuals = records.find(record => record.id === activeId)?.visuals.plot;
   if (visuals) delete visuals[index];
   const card = element('div', undefined, 'graph-card empty-chart');
-  card.append(element('strong', title));
+  const inlineTitle = element('input', undefined, 'inline-plot-title');
+  inlineTitle.type = 'text';
+  inlineTitle.id = 'inlinePlotTitle' + index;
+  inlineTitle.value = title;
+  inlineTitle.setAttribute('aria-label', 'Rename ' + originalPlotTitle(index));
+  inlineTitle.onfocus = () => inlineTitle.select();
+  inlineTitle.onchange = () => updatePlotTitle(index, inlineTitle.value);
+  inlineTitle.onkeydown = event => {
+    if (event.key === 'Escape') inlineTitle.value = panel.title || originalPlotTitle(index);
+    if (event.key === 'Escape' || event.key === 'Enter') inlineTitle.blur();
+  };
+  card.append(inlineTitle);
   if (state.m.curves.length) {
     card.append(element('span', 'Select channels to display in this plot.'));
     const button = element('button', 'Select channels');
@@ -387,7 +472,7 @@ function renderAnalysis(){$('graphs').className='graphs stack';$('graphHint').te
  $('results').hidden=false;$('results').replaceChildren();const accepted=a.peaks.filter(p=>p.status.startsWith('Accepted')).length;$('results').append(element('h3',`${accepted} accepted · ${a.peaks.length-accepted} candidates for review`));if(a.notes.length)$('results').append(element('p',a.notes.join(' · '),'notice'));const wrap=element('div',undefined,'results-wrap'),table=element('table'),head=element('thead'),hr=element('tr');['Frequency (Hz)','Status','Amplification','Phase change (°)','Decision / notes'].forEach(t=>hr.append(element('th',t)));head.append(hr);table.append(head);const body=element('tbody');a.peaks.forEach(p=>{const row=element('tr');[p.frequency_hz.toFixed(3),p.status,p.amplification.toFixed(3),p.phase_change_deg?.toFixed(1)??'Unavailable',[...p.reasons,...p.notes].join('; ')].forEach((t,i)=>row.append(element('td',t,i===1?(p.status.startsWith('Accepted')?'accepted':'candidate'):'')));row.tabIndex=0;const select=()=>{body.querySelectorAll('tr').forEach(r=>r.classList.remove('selected'));row.classList.add('selected');document.querySelectorAll('.chart').forEach(d=>Plotly.relayout(d,{shapes:[{type:'line',xref:'x',yref:'paper',x0:p.frequency_hz,x1:p.frequency_hz,y0:0,y1:1,line:{color:'#d8993d',width:1,dash:'dot'}}]}));};row.onclick=select;row.onkeydown=e=>{if(e.key==='Enter')select();};body.append(row);});table.append(body);wrap.append(table);$('results').append(wrap);}
 $('resetZoom').onclick=()=>document.querySelectorAll('.chart').forEach(d=>window.Plotly?.relayout(d,{'xaxis.autorange':true,'yaxis.autorange':true}));
 function closeExpanded(){$('graphArea').classList.remove('expanded');$('graphArea').querySelector('.close-expanded')?.remove();window.dispatchEvent(new Event('resize'));}
-$('expandGraph').onclick=()=>{$('graphArea').classList.add('expanded');const close=element('button','✕ Close expanded view','close-expanded');close.onclick=closeExpanded;$('graphArea').prepend(close);window.dispatchEvent(new Event('resize'));};document.addEventListener('keydown',e=>{if(e.key==='Escape')closeExpanded();});
+$('expandGraph').onclick=()=>{$('graphArea').classList.add('expanded');const close=element('button','✕ Close expanded view','close-expanded');close.onclick=closeExpanded;$('graphArea').prepend(close);window.dispatchEvent(new Event('resize'));};document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!e.target.closest?.('.plugin-editable, .inline-plot-title'))closeExpanded();});
 function download(result){const bytes=Uint8Array.from(atob(result.data),c=>c.charCodeAt(0));const url=URL.createObjectURL(new Blob([bytes]));const a=element('a');a.href=url;a.download=result.name;a.click();setTimeout(()=>URL.revokeObjectURL(url),60000);}
 $('exportData').onclick=()=>task(async()=>{if(!state.m)throw Error('Open a recording first.');if(!state.meta.axis_verified)throw Error('Supply X-axis settings before export.');const analysis=state.mode==='analyze';if(analysis&&!state.analysis)throw Error('Run analysis first.');const names=[...new Set(state.panels.slice(0,Number($('plotCount').value)).flatMap(p=>p.names))];if(!analysis&&!names.length)throw Error('Select channels in Edit plots first.');download(await request({op:'export',index:state.index,names,analysis,format:$('dataFormat').value}));status('Download prepared.');});
 $('exportGraph').onclick=()=>task(async()=>{const graphs=[...document.querySelectorAll('.chart')];if(!graphs.length)throw Error('Draw a graph first.');for(let i=0;i<graphs.length;i++)await Plotly.downloadImage(graphs[i],{format:$('graphFormat').value,filename:'curve_plot_'+(i+1),width:1400,height:800,scale:2});status('Graph downloads prepared. Your browser may ask to allow multiple downloads.');});$('printGraphs').onclick=()=>window.print();

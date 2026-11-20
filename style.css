@@ -115,6 +115,19 @@
 .empty-chart { padding: 20px; color: #576982; }
 .empty-chart strong { color: #344c70; font-weight: 600; }
 .empty-chart button { justify-self: center; margin-top: 5px; color: #2d64d5; }
+.chart :is(.gtitle, .legendtext)[role=button] { cursor: text; }
+.chart :is(.gtitle, .legendtext)[role=button]:focus-visible { outline: 2px solid #346de3; }
+.empty-chart .inline-plot-title {
+  border-color: transparent;
+  color: #344c70;
+  font-size: 16px;
+  font-weight: 600;
+  text-align: center;
+  width: min(100%, 28rem);
+  justify-self: center;
+  padding: 6px;
+}
+.empty-chart .inline-plot-title:hover { border-color: #bbceef; }
 #graphArea { container-type: inline-size; }
 @container (max-width: 680px) {
   .graphs { grid-template-columns: minmax(0, 1fr); }
