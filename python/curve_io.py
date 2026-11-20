@@ -55,6 +55,7 @@ class CurveData:
     axis_verified: bool = True
     axis_note: str = "X axis read from the file."
     sweep_spacing: str | None = None
+    applied_sweep_spacing: str | None = None
 
     def resonance_channels(self, measurement):
         if self.kind != "sine":
@@ -176,6 +177,8 @@ def override_axis(data, *, low=None, high=None, logarithmic=True, step=None):
                 c.x = np.arange(len(c.x), dtype=float) * step
             else:
                 c.x = np.arange(len(c.x), dtype=float) / step
+    if data.kind == "sine":
+        data.applied_sweep_spacing = "logarithmic" if logarithmic else "linear"
     data.axis_verified = True
     data.axis_note = "X axis supplied manually from your test settings."
 

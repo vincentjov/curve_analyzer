@@ -31,6 +31,7 @@ def clean(value):
 def metadata():
     return dict(name=current.path.name, kind=current.kind, axis_verified=current.axis_verified,
                 axis_note=current.axis_note, sweep_spacing=current.sweep_spacing,
+                applied_sweep_spacing=current.applied_sweep_spacing,
                 measurements=[m.label for m in current.measurements],
                 settings=asdict(Settings()))
 

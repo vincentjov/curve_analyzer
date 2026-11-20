@@ -21,6 +21,13 @@
 }
 #axisSettings .form-row > label:has(input[type=checkbox]) { flex-direction: row; }
 
+.notice.axis-warning {
+  background: #fff4e2;
+  border: 1px solid #efd5aa;
+  color: #754615;
+}
+#axisSpacingWarning { flex-basis: 100%; margin: 0; }
+
 .workspace-nav .nav-icon {
   display: grid;
   place-items: center;

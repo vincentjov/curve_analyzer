@@ -10,7 +10,7 @@ let worker,requestId=0,pending=new Map(),syncing=false;
 function status(text,error=false){$('status').textContent=text;$('status').classList.toggle('error',error);}
 function element(tag,text,cls){const el=document.createElement(tag);if(text!==undefined)el.textContent=text;if(cls)el.className=cls;return el;}
 function option(select,value,text=value){const o=element('option',text);o.value=value;select.append(o);}
-function startEngine(){worker?.terminate();for(const p of pending.values())p.reject(Error('Engine restarted.'));pending.clear();worker=new Worker(new URL('worker.js?v=1.3',import.meta.url),{type:'module'});
+function startEngine(){worker?.terminate();for(const p of pending.values())p.reject(Error('Engine restarted.'));pending.clear();worker=new Worker(new URL('worker.js?v=1.4',import.meta.url),{type:'module'});
  worker.onmessage=({data})=>{if(data.progress){status(data.progress);return;}const p=pending.get(data.id);if(!p)return;pending.delete(data.id);data.error?p.reject(Error(data.error)):p.resolve(data.result);};
  worker.onerror=e=>{for(const p of pending.values())p.reject(Error(e.message||'Could not start engine.'));pending.clear();$('retryEngine').hidden=false;};
  $('retryEngine').hidden=true;$('engineState').textContent='Engine loading';
@@ -41,7 +41,7 @@ function selectedMeasurement(){return Number($('measurement').value)||0;}
 const controlIds=['plotCount','layout','response','reference','linkX','wheelY','axisLow','axisHigh','axisStep','axisSpacing'];
 function stashRecord(){const record=records.find(r=>r.id===activeId);if(!record)return;record.saved={meta:state.meta,m:state.m,index:state.index,panels:state.panels,analysis:state.analysis,controls:Object.fromEntries(controlIds.map(id=>[id,$(id).type==='checkbox'?$(id).checked:$(id).value])),thresholds:[...document.querySelectorAll('[data-setting]')].map(el=>[el.dataset.setting,el.value])};if(!state.analysis)delete record.visuals.analyze;}
 function renderTabs(){$('recordTabs').replaceChildren();for(const record of records){const wrap=element('div',undefined,'record-tab'+(record.id===activeId?' active':'')),button=element('button',record.file.name);button.setAttribute('role','tab');button.setAttribute('aria-selected',record.id===activeId?'true':'false');button.title=record.relative;button.onclick=()=>task(()=>activateRecord(record));const close=element('button','×','close-tab');close.setAttribute('aria-label','Close '+record.file.name);close.onclick=()=>task(()=>closeRecord(record));wrap.append(button,close);$('recordTabs').append(wrap);}}
-async function activateRecord(record){stashRecord();activeId=record.id;const saved=record.saved;Object.assign(state,{meta:saved.meta,m:saved.m,index:saved.index,panels:saved.panels,analysis:saved.analysis});$('fileName').textContent=record.relative;$('measurement').replaceChildren();state.meta.measurements.forEach((m,i)=>option($('measurement'),i,m));$('measurement').disabled=false;$('measurement').value=state.index;updateAxis();populateSensors();for(const [id,value] of Object.entries(saved.controls||{})){if($(id).type==='checkbox')$(id).checked=value;else $(id).value=value;}for(const [key,value] of saved.thresholds||[])document.querySelector('[data-setting="'+key+'"]').value=value;renderTabs();renderWorkspace();}
+async function activateRecord(record){stashRecord();activeId=record.id;const saved=record.saved;Object.assign(state,{meta:saved.meta,m:saved.m,index:saved.index,panels:saved.panels,analysis:saved.analysis});$('fileName').textContent=record.relative;$('measurement').replaceChildren();state.meta.measurements.forEach((m,i)=>option($('measurement'),i,m));$('measurement').disabled=false;$('measurement').value=state.index;populateSensors();for(const [id,value] of Object.entries(saved.controls||{})){if($(id).type==='checkbox')$(id).checked=value;else $(id).value=value;}updateAxis();for(const [key,value] of saved.thresholds||[])document.querySelector('[data-setting="'+key+'"]').value=value;renderTabs();renderWorkspace();}
 async function closeRecord(record){const index=records.indexOf(record);await request({op:'close',record_id:record.id});records.splice(index,1);if(activeId===record.id){activeId=null;if(records.length)await activateRecord(records[Math.min(index,records.length-1)]);else{Object.assign(state,{meta:null,m:null,index:0,analysis:null,panels:Array.from({length:4},blank)});$('measurement').replaceChildren();$('measurement').disabled=true;$('fileName').textContent='No recording selected';$('axisNote').hidden=true;$('axisSettings').hidden=true;$('response').replaceChildren();$('reference').replaceChildren();renderWorkspace();}}renderTabs();}
 async function openRecordings(entries){let opened=0,failed=[];for(const entry of entries){if(!supported(entry.file))continue;const key=entry.relative+'|'+entry.file.size+'|'+entry.file.lastModified;const existing=records.find(r=>r.key===key);if(existing){await activateRecord(existing);continue;}try{await loadFile(entry.file,entry.relative,key);opened++;}catch(e){failed.push(entry.file.name+': '+e.message);}}status(`${opened} recording(s) added · ${records.length} open`+(failed.length?' · Failed: '+failed.join('; '):''),!!failed.length);}
 async function loadFile(file,relative=file.name,key=relative+'|'+file.size+'|'+file.lastModified){stashRecord();const id='record-'+(++recordCounter);status('Decoding '+file.name+'…');const meta=await request({op:'load',record_id:id,name:file.name},await file.arrayBuffer());const record={id,file,relative,key,visuals:{},saved:{}};records.push(record);activeId=id;state.meta=meta;state.analysis=null;state.panels=Array.from({length:4},blank);$('plotCount').value='1';$('layout').value='grid';$('axisSpacing').value=meta.sweep_spacing??'';$('fileName').textContent=relative;$('measurement').replaceChildren();meta.measurements.forEach((m,i)=>option($('measurement'),i,m));$('measurement').disabled=false;state.index=meta.measurements.length-1;$('measurement').value=state.index;updateAxis();await loadMeasurement(true);stashRecord();renderTabs();if(!['plot','analyze'].includes(state.mode))mode('plot');}
@@ -49,14 +49,34 @@ async function chooseMode(name){if(state.busy)return;if(homeEntries.length&&name
 function updateAxis() {
   $('axisSettings').hidden = false;
   $('axisSpacingField').hidden = state.meta.kind !== 'sine';
-  const spacing = state.meta.sweep_spacing;
-  const spacingLabel = spacing === 'linear' ? 'Linear' : 'Logarithmic';
-  $('axisSummary').textContent = spacing
+  const {sweep_spacing: recorded, applied_sweep_spacing: applied} = state.meta;
+  const spacingLabel = recorded === 'linear' ? 'Linear' : 'Logarithmic';
+  $('axisSummary').textContent = recorded
     ? 'Adjust X-axis test settings \u00b7 ' + spacingLabel + ' sweep detected'
     : 'Adjust X-axis test settings';
-  $('axisNote').hidden = state.meta.axis_verified;
-  $('axisNote').textContent = state.meta.axis_note + ' Supply the actual test settings below before analysis or export.';
+
+  const overridden = Boolean(recorded && applied && applied !== recorded);
+  const note = $('axisNote');
+  note.hidden = state.meta.axis_verified && !overridden;
+  note.classList.toggle('axis-warning', overridden);
+  note.textContent = overridden
+    ? `The frequency axis was rebuilt with ${applied} spacing. The recording used ${recorded} spacing. The plots, resonance frequencies, and data exports may be misleading.`
+    : state.meta.axis_note + ' Supply the actual test settings below before analysis or export.';
+  updateSweepSpacingWarning();
 }
+
+function updateSweepSpacingWarning() {
+  const {sweep_spacing: recorded, applied_sweep_spacing: applied} = state.meta;
+  const selected = $('axisSpacing').value;
+  const warning = $('axisSpacingWarning');
+  const different = recorded && selected && selected !== recorded && selected !== applied;
+  warning.hidden = !different;
+  warning.textContent = different
+    ? `The recording used ${recorded} spacing. Applying ${selected} spacing will reassign the recorded points to different frequencies and may make plots, resonance results, and data exports misleading. Use Log X in Title & axis scales to change the display scale.`
+    : '';
+}
+
+$('axisSpacing').onchange = updateSweepSpacingWarning;
 async function loadMeasurement(openSetup = false){const record=records.find(r=>r.id===activeId);if(record)record.visuals={};state.index=selectedMeasurement();state.m=await request({op:'measurement',index:state.index});state.analysis=null;
  for(const p of state.panels)p.names=p.names.map(n=>state.m.curves.find(c=>sourceChannelName(c.name)===sourceChannelName(n)&&c.quantity===p.quantity)?.name).filter(Boolean);
  populateSensors();renderWorkspace(openSetup);}
